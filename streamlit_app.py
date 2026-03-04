@@ -6,6 +6,7 @@ import hashlib
 import pickle
 import preprocessing_pipeline as pipeline
 import preprocessing.text_vectorization as text_vectorization
+import preprocessing.text_embeddings as text_embeddings
 from EDA import (
     display_dataset_overview, display_missing_values, display_data_types,
     display_statistics_visualization, search_column, display_individual_feature_distribution,
@@ -207,6 +208,46 @@ def show_advanced_preprocessing(df):
                              st.success(f"✅ Created single vector column: {res[0]}")
                              st.rerun()
 
+        # Semantic Embeddings (Sentence Transformers)
+        with st.sidebar.expander("🧠 Semantic Embeddings (Deep Learning)"):
+            st.caption("Capture meaning of text using Transformer models. Good for similarity & clustering.")
+            
+            emb_col = st.selectbox("Select text column", text_cols, key="emb_col_select")
+            
+            st.info("ℹ️ Uses 'all-MiniLM-L6-v2' model (cached). Embeddings stored as single column (memory only).")
+            
+            pca_dims = st.checkbox("Visualize with PCA (2D/3D)?", value=True, key="emb_pca_check")
+            n_dims = 2
+            if pca_dims:
+                n_dims = st.radio("PCA Dimensions", [2, 3], horizontal=True, key="emb_pca_dims")
+
+            if st.button("Generate Embeddings", key="gen_emb_btn"):
+                if validate_columns(df, [emb_col], "generate embeddings"):
+                    with st.spinner("Loading model & generating embeddings (this may take a moment)..."):
+                        try:
+                            # Generate embeddings
+                            embeddings_series = text_embeddings.generate_embeddings(df, emb_col)
+                            
+                            # Add to DataFrame (in-memory only, new column)
+                            new_col_name = f"{emb_col}_embedding"
+                            df[new_col_name] = embeddings_series
+                            
+                            # PCA Visualization
+                            if pca_dims:
+                                st.session_state.temp_pca_result = {
+                                    "data": text_embeddings.reduce_dimensions(embeddings_series, n_components=n_dims),
+                                    "dims": n_dims,
+                                    "source_col": emb_col
+                                }
+                            
+                            save_to_history(df)
+                            st.session_state.processed_df = df
+                            st.session_state.changed_columns = [new_col_name]
+                            st.success(f"✅ Embeddings generated in '{new_col_name}'.\n\n👉 Go to the **PCA Analysis** tab to view the visualization.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error generating embeddings: {e}")
+
     # Advanced Imputation
     with st.sidebar.expander("🔧 Advanced Imputation"):
         st.caption("Fill missing values using smart methods like KNN (nearest neighbors) or Regression.")
@@ -392,7 +433,53 @@ def show_advanced_preprocessing(df):
                 st.rerun()
 
 def show_pca_visualization():
-    """Displays PCA visualization if PCA was applied."""
+    """Displays PCA visualization if PCA was applied (standard or embeddings)."""
+    
+    # Check for Semantic Embeddings PCA
+    if 'temp_pca_result' in st.session_state and st.session_state.temp_pca_result:
+        st.subheader(f"🧠 Semantic Embeddings PCA ({st.session_state.temp_pca_result['dims']}D)")
+        st.caption(f"Source Column: {st.session_state.temp_pca_result['source_col']}")
+        
+        result = st.session_state.temp_pca_result
+        pca_df = result['data'].copy()
+        dims = result['dims']
+        source_col = result['source_col']
+        
+        # Add source text for hover if available
+        if source_col in st.session_state.processed_df.columns:
+            pca_df[source_col] = st.session_state.processed_df[source_col]
+            hover_data = [source_col]
+        else:
+            hover_data = None
+        
+        if dims == 2:
+            fig = px.scatter(
+                pca_df, 
+                x='PCA_1', 
+                y='PCA_2',
+                title="2D Visualization of Embeddings",
+                hover_data=hover_data
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+        elif dims == 3:
+            fig = px.scatter_3d(
+                pca_df, 
+                x='PCA_1', 
+                y='PCA_2', 
+                z='PCA_3',
+                title="3D Visualization of Embeddings",
+                 hover_data=hover_data
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+        if st.button("Clear Embedding Visualization"):
+            del st.session_state.temp_pca_result
+            st.rerun()
+            
+        st.markdown("---")
+
+    # Standard PCA Info
     if 'pca_info' in st.session_state and st.session_state.pca_info is not None:
         st.subheader("📈 PCA Analysis Results")
         pca_info = st.session_state.pca_info
